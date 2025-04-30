@@ -130,7 +130,7 @@ func convertCommandRunFunction(options *convertOptions) func(cmd *cobra.Command,
 
 			rootItem = OutputUnit{dir: options.dir}
 			for _, child := range children {
-				isAllowedFormat := slices.Contains(allowedFormats, filepath.Ext(child.Name()))
+				isAllowedFormat := slices.Contains(allowedFormats, filepath.Ext(strings.ToLower(child.Name())))
 				if !child.IsDir() && !isAllowedFormat {
 					continue
 				}
@@ -150,7 +150,7 @@ func convertCommandRunFunction(options *convertOptions) func(cmd *cobra.Command,
 
 				subDirOutput := OutputUnit{dir: subDir}
 				for _, file := range files {
-					isAllowedFormat := slices.Contains(allowedFormats, filepath.Ext(file.Name()))
+					isAllowedFormat := slices.Contains(allowedFormats, filepath.Ext(strings.ToLower(file.Name())))
 					if (!file.IsDir() && !isAllowedFormat) || file.IsDir() {
 						continue
 					}
