@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-var Version string
+var Version = "source"
 var OutputDir string
 
 var rootCmd = &cobra.Command{
@@ -22,9 +22,6 @@ var versionCmd = &cobra.Command{
 	Short: "Print the version number of manga-tools",
 	Long:  `Print the version number of manga-tools`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if Version == "" {
-			Version = "0.0.0-local"
-		}
 		fmt.Printf("manga-tools %s\n", Version)
 	},
 }
