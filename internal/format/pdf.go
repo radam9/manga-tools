@@ -11,6 +11,9 @@ import (
 type PDF struct{}
 
 func (p PDF) Save(filePath string, pages []model2.FilePath) error {
+	if len(pages) == 0 {
+		return nil
+	}
 	imp, conf := DefaultPDFConfig()
 	err := api.ImportImagesFile(pages, filePath, imp, conf)
 	if err != nil {

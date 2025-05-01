@@ -17,11 +17,10 @@ var imageFormats = []string{".jpg", ".jpeg", ".png"}
 var archiveFormats = []string{".cbr", ".cbz"}
 
 type convertOptions struct {
-	dir     string
-	files   []string
-	archive bool
-	image   bool
-	bundle  bool
+	dir         string
+	archiveMode bool
+	imageMode   bool
+	bundle      bool
 }
 
 func NewConvertCommand() *cobra.Command {
@@ -55,60 +54,18 @@ If the bundle flag is passed, the everything will bundled in a single pdf in the
 		os.Exit(1)
 	}
 
-	const convertArchiveFlag = "archive"
-	const convertImageFlag = "image"
-	flags.BoolVar(&options.archive, convertArchiveFlag, false, "source files are archive format (cbr/cbz)")
-	flags.BoolVar(&options.image, convertImageFlag, false, "source files are image format")
-	cmd.MarkFlagsMutuallyExclusive(convertArchiveFlag, convertImageFlag)
+	const convertArchiveModeFlag = "archive"
+	const convertImageModeFlag = "image"
+	flags.BoolVar(&options.archiveMode, convertArchiveModeFlag, false, "source files are archive format (cbr/cbz)")
+	flags.BoolVar(&options.imageMode, convertImageModeFlag, false, "source files are image format")
+	cmd.MarkFlagsMutuallyExclusive(convertArchiveModeFlag, convertImageModeFlag)
 
 	flags.BoolVarP(&options.bundle, "bundle", "b", false, "bundle all passed dir and files into a single pdf")
 	return cmd
 }
 
-const inputTypeImage = "image"
-const inputTypeArchive = "archive"
-
-type OutputUnit struct {
-	dir   string
-	files []model.FilePath
-}
-
-func (o OutputUnit) getImages(tempDir string, inputFormat string) ([]string, error) {
-	var images []string
-	if inputFormat == inputTypeImage {
-		for _, image := range o.files {
-			images = append(images, image)
-		}
-		return images, nil
-	}
-
-	// archive mode
-	for _, archive := range o.files {
-		imagePaths, err := format.ExtractArchive(tempDir, o.dir, filepath.Base(archive))
-		if err != nil {
-			return nil, fmt.Errorf("extracting archive %q: %w", archive, err)
-		}
-		images = append(images, imagePaths...)
-	}
-	return images, nil
-}
-
-func (o *OutputUnit) appendFile(newFile model.FilePath) {
-	currentFiles := o.files
-	currentFiles = append(currentFiles, newFile)
-	o.files = currentFiles
-}
-
 func convertCommandRunFunction(options *convertOptions) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		allowedFormats := imageFormats
-		inputFormat := inputTypeImage
-		if options.archive {
-			allowedFormats = archiveFormats
-			inputFormat = inputTypeArchive
-		}
-
-		pdf := format.PDF{}
 		if err := os.MkdirAll(OutputDir, 0755); err != nil {
 			return fmt.Errorf("creating output directory %q: %w", OutputDir, err)
 		}
@@ -118,92 +75,131 @@ func convertCommandRunFunction(options *convertOptions) func(cmd *cobra.Command,
 		}
 		defer os.RemoveAll(tempDir)
 
-		var rootItem OutputUnit
-		var items []OutputUnit
-
-		if options.dir != "" {
-			children, err := os.ReadDir(options.dir)
-			if err != nil {
-				return fmt.Errorf("listing directory %q contents: %w", options.dir, err)
-			}
-			children = internal.SortDirEntry(children)
-
-			rootItem = OutputUnit{dir: options.dir}
-			for _, child := range children {
-				isAllowedFormat := slices.Contains(allowedFormats, filepath.Ext(strings.ToLower(child.Name())))
-				if !child.IsDir() && !isAllowedFormat {
-					continue
-				}
-
-				if !child.IsDir() && isAllowedFormat {
-					rootItem.appendFile(filepath.Join(options.dir, child.Name()))
-					continue
-				}
-
-				// child is directory
-				subDir := filepath.Join(options.dir, child.Name())
-				files, err := os.ReadDir(subDir)
-				if err != nil {
-					return fmt.Errorf("listing directory %q contents: %w", filepath.Join(options.dir, child.Name()), err)
-				}
-				files = internal.SortDirEntry(files)
-
-				subDirOutput := OutputUnit{dir: subDir}
-				for _, file := range files {
-					isAllowedFormat := slices.Contains(allowedFormats, filepath.Ext(strings.ToLower(file.Name())))
-					if (!file.IsDir() && !isAllowedFormat) || file.IsDir() {
-						continue
-					}
-					subDirOutput.appendFile(filepath.Join(subDir, file.Name()))
-				}
-				if len(subDirOutput.files) == 0 {
-					continue
-				}
-				items = append(items, subDirOutput)
-			}
+		rootName, items, err := parseDirs(options)
+		if err != nil {
+			return err
 		}
 
-		var images []model.FilePath
-		for _, item := range items {
-			result, err := item.getImages(tempDir, inputFormat)
-			if err != nil {
-				return fmt.Errorf("getting images for %q: %w", item.dir, err)
+		return writeOutputPDF(tempDir, items, rootName, options.imageMode, options.bundle)
+	}
+}
+
+func parseDirs(options *convertOptions) (string, []convertOutputUnit, error) {
+	allowedFormats := imageFormats
+	if options.archiveMode {
+		allowedFormats = archiveFormats
+	}
+
+	var rootItem convertOutputUnit
+	var items []convertOutputUnit
+
+	rootItem = convertOutputUnit{dir: options.dir, name: filepath.Base(options.dir)}
+	children, err := os.ReadDir(options.dir)
+	if err != nil {
+		return "", nil, fmt.Errorf("listing directory %q contents: %w", options.dir, err)
+	}
+	children = internal.SortDirEntry(children)
+
+	for _, child := range children {
+		isAllowedFormat := slices.Contains(allowedFormats, filepath.Ext(strings.ToLower(child.Name())))
+		if !child.IsDir() && !isAllowedFormat {
+			continue
+		}
+
+		childPath := filepath.Join(options.dir, child.Name())
+		if !child.IsDir() && isAllowedFormat {
+			if (options.imageMode) || (options.archiveMode && options.bundle) {
+				rootItem.appendFile(childPath)
+			} else if options.archiveMode && !options.bundle {
+				item := convertOutputUnit{
+					dir:   options.dir,
+					name:  child.Name(),
+					files: []model.FilePath{childPath},
+				}
+				items = append(items, item)
 			}
-			if options.bundle {
-				images = append(images, result...)
+			continue
+		}
+
+		// child is directory
+		files, err := os.ReadDir(childPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("listing directory %q contents: %w", childPath, err)
+		}
+		files = internal.SortDirEntry(files)
+
+		subDirOutput := convertOutputUnit{dir: childPath, name: filepath.Base(child.Name())}
+		for _, file := range files {
+			isAllowedFormat := slices.Contains(allowedFormats, filepath.Ext(strings.ToLower(file.Name())))
+			if (!file.IsDir() && !isAllowedFormat) || file.IsDir() {
 				continue
 			}
-
-			outputFilePath := filepath.Join(OutputDir, fmt.Sprintf("%s.pdf", filepath.Base(item.dir)))
-			if err := pdf.Save(outputFilePath, result); err != nil {
-				return fmt.Errorf("saving pdf %q: %w", outputFilePath, err)
-			}
+			subDirOutput.appendFile(filepath.Join(childPath, file.Name()))
 		}
-
-		if options.bundle || inputFormat == inputTypeImage {
-			result, err := rootItem.getImages(tempDir, inputFormat)
-			if err != nil {
-				return fmt.Errorf("getting images for %q: %w", rootItem.dir, err)
-			}
-			images = append(images, result...)
-			outputFilePath := filepath.Join(OutputDir, fmt.Sprintf("%s.pdf", filepath.Base(rootItem.dir)))
-			if err := pdf.Save(outputFilePath, images); err != nil {
-				return fmt.Errorf("saving pdf %q: %w", outputFilePath, err)
-			}
-			return nil
-		}
-
-		for _, archive := range rootItem.files {
-			result, err := format.ExtractArchive(tempDir, rootItem.dir, filepath.Base(archive))
-			if err != nil {
-				return fmt.Errorf("extracting archive %q: %w", archive, err)
-			}
-			outputFilePath := filepath.Join(OutputDir, strings.Replace(filepath.Base(archive), filepath.Ext(archive), ".pdf", 1))
-			if err := pdf.Save(outputFilePath, result); err != nil {
-				return fmt.Errorf("saving pdf %q: %w", outputFilePath, err)
-			}
-		}
-
-		return nil
+		items = append(items, subDirOutput)
 	}
+	items = append(items, rootItem)
+
+	return rootItem.name, items, nil
+}
+
+func writeOutputPDF(tempDir string, items []convertOutputUnit, rootName string, imageMode, bundle bool) error {
+	pdf := format.PDF{}
+
+	var images []model.FilePath
+	for _, item := range items {
+		result, err := item.getImages(tempDir, imageMode)
+		if err != nil {
+			return fmt.Errorf("getting images for %q: %w", item.dir, err)
+		}
+		if bundle {
+			images = append(images, result...)
+			continue
+		}
+
+		outputFilePath := filepath.Join(OutputDir, fmt.Sprintf("%s.pdf", item.name))
+		if err := pdf.Save(outputFilePath, result); err != nil {
+			return fmt.Errorf("saving pdf %q: %w", outputFilePath, err)
+		}
+	}
+
+	if bundle {
+		outputFilePath := filepath.Join(OutputDir, fmt.Sprintf("%s.pdf", rootName))
+		if err := pdf.Save(outputFilePath, images); err != nil {
+			return fmt.Errorf("saving pdf %q: %w", outputFilePath, err)
+		}
+	}
+	return nil
+}
+
+type convertOutputUnit struct {
+	dir   string
+	name  string
+	files []model.FilePath
+}
+
+func (c convertOutputUnit) getImages(tempDir string, imageMode bool) ([]string, error) {
+	var images []string
+	if imageMode {
+		for _, image := range c.files {
+			images = append(images, image)
+		}
+		return images, nil
+	}
+
+	// archive mode
+	for _, archive := range c.files {
+		imagePaths, err := format.ExtractArchive(tempDir, c.dir, filepath.Base(archive))
+		if err != nil {
+			return nil, fmt.Errorf("extracting archive %q: %w", archive, err)
+		}
+		images = append(images, imagePaths...)
+	}
+	return images, nil
+}
+
+func (c *convertOutputUnit) appendFile(newFile model.FilePath) {
+	currentFiles := c.files
+	currentFiles = append(currentFiles, newFile)
+	c.files = currentFiles
 }
