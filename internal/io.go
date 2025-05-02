@@ -1,8 +1,11 @@
 package internal
 
 import (
+	"github.com/maruel/natural"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 )
 
 func SortDirEntry(items []os.DirEntry) []os.DirEntry {
@@ -14,13 +17,15 @@ func SortDirEntry(items []os.DirEntry) []os.DirEntry {
 			return 1
 		}
 
-		if a.Name() < b.Name() {
+		aName := strings.TrimSuffix(a.Name(), filepath.Ext(a.Name()))
+		bName := strings.TrimSuffix(b.Name(), filepath.Ext(b.Name()))
+
+		if natural.Less(aName, bName) {
 			return -1
-		} else if a.Name() > b.Name() {
+		} else if natural.Less(bName, aName) {
 			return 1
 		}
 		return 0
-
 	})
 	return items
 }

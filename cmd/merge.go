@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/radam9/manga-tools/internal"
 	"github.com/radam9/manga-tools/internal/format"
 	"github.com/spf13/cobra"
 	"os"
@@ -50,12 +51,14 @@ func mergeCommandRunFunction(options *mergeOptions) func(cmd *cobra.Command, arg
 		var pdfs []string
 
 		for _, dir := range options.dirs {
-			items, err := os.ReadDir(dir)
+			children, err := os.ReadDir(dir)
 			if err != nil {
 				return fmt.Errorf("listing files in directory %q: %w", dir, err)
 			}
-			for _, item := range items {
-				pdfPath := filepath.Join(dir, item.Name())
+			children = internal.SortDirEntry(children)
+
+			for _, child := range children {
+				pdfPath := filepath.Join(dir, child.Name())
 				if filepath.Ext(strings.ToLower(pdfPath)) != ".pdf" {
 					continue
 				}
