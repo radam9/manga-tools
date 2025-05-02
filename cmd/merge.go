@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -39,8 +40,8 @@ The items are merged in the following order:
 	}
 
 	flags := cmd.Flags()
-	flags.StringSliceP(mergeDirFlag, "d", nil, "comma separated list of path to directories containing pdf files to merge")
-	flags.StringSliceP(mergeFilesFlag, "f", nil, "comma separated list of path to pdf files to merge")
+	flags.StringSliceVarP(&options.dirs, mergeDirFlag, "d", nil, "comma separated list of path to directories containing pdf files to merge")
+	flags.StringSliceVarP(&options.files, mergeFilesFlag, "f", nil, "comma separated list of path to pdf files to merge")
 	cmd.MarkFlagsOneRequired(mergeDirFlag, mergeFilesFlag)
 
 	return cmd
@@ -48,6 +49,9 @@ The items are merged in the following order:
 
 func mergeCommandRunFunction(options *mergeOptions) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
+		if err := os.MkdirAll(OutputDir, 0755); err != nil {
+			return fmt.Errorf("creating output directory %q: %w", OutputDir, err)
+		}
 		var pdfs []string
 
 		for _, dir := range options.dirs {
@@ -69,7 +73,8 @@ func mergeCommandRunFunction(options *mergeOptions) func(cmd *cobra.Command, arg
 
 		_, conf := format.DefaultPDFConfig()
 
-		if err := api.MergeCreateFile(pdfs, OutputDir, false, conf); err != nil {
+		outputFile := filepath.Join(OutputDir, fmt.Sprintf("output_%d.pdf", time.Now().Unix()))
+		if err := api.MergeCreateFile(pdfs, outputFile, false, conf); err != nil {
 			return fmt.Errorf("merging pdf files: %w", err)
 		}
 		return nil

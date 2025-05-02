@@ -113,7 +113,7 @@ func parseDirs(options *convertOptions) (string, []convertOutputUnit, error) {
 			} else if options.archiveMode && !options.bundle {
 				item := convertOutputUnit{
 					dir:   options.dir,
-					name:  child.Name(),
+					name:  strings.TrimSuffix(child.Name(), filepath.Ext(child.Name())),
 					files: []model.FilePath{childPath},
 				}
 				items = append(items, item)
